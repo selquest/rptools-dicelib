@@ -15,10 +15,7 @@
 package net.rptools.common.expression;
 
 import net.rptools.common.expression.function.*;
-import net.rptools.parser.Expression;
-import net.rptools.parser.Parser;
-import net.rptools.parser.ParserException;
-import net.rptools.parser.VariableResolver;
+import net.rptools.parser.*;
 import net.rptools.parser.transform.RegexpStringTransformer;
 import net.rptools.parser.transform.StringLiteralTransformer;
 
@@ -56,6 +53,14 @@ public class ExpressionParser {
         // re-roll
         new String[] {"\\b(\\d+)[dD](\\d+)[rR](\\d+)\\b", "reroll($1, $2, $3)"},
         new String[] {"\\b[dD](\\d+)[rR](\\d+)\\b", "reroll(1, $1, $2)"},
+
+        // re-roll once and keep the new value
+        new String[] {"\\b(\\d+)[dD](\\d+)[rR][kK](\\d+)\\b", "rerollOnce($1, $2, $3)"},
+        new String[] {"\\b[dD](\\d+)[rR][kK](\\d+)\\b", "rerollOnce(1, $1, $2)"},
+
+        // re-roll once and choose the higher value
+        new String[] {"\\b(\\d+)[dD](\\d+)[rR][cC](\\d+)\\b", "rerollOnce($1, $2, $3, true)"},
+        new String[] {"\\b[dD](\\d+)[rR][cC](\\d+)\\b", "rerollOnce(1, $1, $2, true)"},
 
         // count success
         new String[] {"\\b(\\d+)[dD](\\d+)[sS](\\d+)\\b", "success($1, $2, $3)"},
@@ -152,7 +157,13 @@ public class ExpressionParser {
         new String[] {"\\b(\\d+)[dD](\\d+)[qQ]#([+-]?\\d+)\\b", "rollAddWithLower($1, $2, $3, 1)"},
         new String[] {"\\b[dD](\\d+)[qQ]#([+-]?\\d+)\\b", "rollAddWithLower(1, $1, $2, 1)"},
         new String[] {"\\b(\\d+)[dD](\\d+)[qQ]\\b", "rollAddWithLower($1, $2, 0, 1)"},
-        new String[] {"\\b[dD](\\d+)[qQ]\\b", "rollAddWithLower(1, $1, 0, 1)"}
+        new String[] {"\\b[dD](\\d+)[qQ]\\b", "rollAddWithLower(1, $1, 0, 1)"},
+
+        // Ars Magica Stress Die
+        new String[] {"\\b[aA][sS](\\d+)\\b", "arsMagicaStress($1, 0)"},
+        new String[] {"\\b[aA][sS](\\d+)[bB]#([+-]?\\d+)\\b", "arsMagicaStress($1, $2)"},
+        new String[] {"\\b[aA][nN][sS](\\d+)\\b", "arsMagicaStressNum($1, 0)"},
+        new String[] {"\\b[aA][nN][sS](\\d+)[bB]#([+-]?\\d+)\\b", "arsMagicaStressNum($1, $2)"},
       };
 
   private final Parser parser;
@@ -161,22 +172,16 @@ public class ExpressionParser {
     this(DICE_PATTERNS);
   }
 
-  public ExpressionParser(VariableResolver resolver) {
-    this(DICE_PATTERNS, resolver);
-  }
-
   public ExpressionParser(String[][] regexpTransforms) {
-    this(regexpTransforms, null);
-  }
 
-  public ExpressionParser(String[][] regexpTransforms, VariableResolver resolver) {
-    parser = new Parser(resolver, true);
+    parser = createParser();
 
     parser.addFunction(new CountSuccessDice());
     parser.addFunction(new DropRoll());
     parser.addFunction(new ExplodeDice());
     parser.addFunction(new KeepRoll());
     parser.addFunction(new RerollDice());
+    parser.addFunction(new RerollDiceOnce());
     parser.addFunction(new HeroRoll());
     parser.addFunction(new HeroKillingRoll());
     parser.addFunction(new FudgeRoll());
@@ -189,6 +194,7 @@ public class ExpressionParser {
     parser.addFunction(new RollWithBounds());
     parser.addFunction(new DropHighestRoll());
     parser.addFunction(new KeepLowestRoll());
+    parser.addFunction(new ArsMagicaStress());
 
     parser.addFunction(new If());
 
@@ -199,22 +205,42 @@ public class ExpressionParser {
     parser.addTransformer(slt.getReplaceTransformer());
   }
 
+  protected Parser createParser() {
+    return new Parser();
+  }
+
   public Parser getParser() {
     return parser;
   }
 
   public Result evaluate(String expression) throws ParserException {
+    return evaluate(expression, new MapVariableResolver(), true);
+  }
+
+  public Result evaluate(String expression, VariableResolver resolver) throws ParserException {
+    return evaluate(expression, resolver, true);
+  }
+
+  public Result evaluate(String expression, VariableResolver resolver, boolean makeDeterministic)
+      throws ParserException {
     Result ret = new Result(expression);
     RunData oldData = RunData.hasCurrent() ? RunData.getCurrent() : null;
     try {
-      RunData newRunData = new RunData(ret);
+      RunData newRunData;
+      if (oldData != null) {
+        newRunData = oldData.createChildRunData(ret);
+      } else {
+        newRunData = new RunData(ret);
+      }
       RunData.setCurrent(newRunData);
 
       synchronized (parser) {
-        Expression xp = parser.parseExpression(expression);
-        Expression dxp = xp.getDeterministicExpression();
-        ret.setDetailExpression(dxp.format());
-        ret.setValue(dxp.evaluate());
+        final Expression xp =
+            makeDeterministic
+                ? parser.parseExpression(expression).getDeterministicExpression(resolver)
+                : parser.parseExpression(expression);
+        ret.setDetailExpression(() -> xp.format());
+        ret.setValue(xp.evaluate(resolver));
         ret.setRolled(newRunData.getRolled());
       }
     } finally {

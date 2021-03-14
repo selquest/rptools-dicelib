@@ -30,7 +30,7 @@ public class RunData {
   private long randomMax;
   private long randomMin;
 
-  private List<Integer> rolled = new LinkedList<>();
+  protected List<Integer> rolled = new LinkedList<>();
 
   public RunData(Result result) {
     this.result = result;
@@ -103,5 +103,15 @@ public class RunData {
 
   public List<Integer> getRolled() {
     return Collections.unmodifiableList(rolled);
+  }
+
+  /**
+   * Create a new RunData instance for a child execution.
+   *
+   * @param childResult the Result object for the new RunData
+   * @return a new RunData
+   */
+  public RunData createChildRunData(Result childResult) {
+    return new RunData(childResult);
   }
 }

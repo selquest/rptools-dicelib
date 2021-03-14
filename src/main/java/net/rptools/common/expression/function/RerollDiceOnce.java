@@ -18,21 +18,35 @@ import java.math.BigDecimal;
 import java.util.List;
 import net.rptools.parser.Parser;
 import net.rptools.parser.VariableResolver;
-import net.rptools.parser.function.AbstractFunction;
+import net.rptools.parser.function.AbstractNumberFunction;
 import net.rptools.parser.function.EvaluationException;
 
-public class If extends AbstractFunction {
+/**
+ * Will re-roll dice under a given threshold once, and optionally choose the higher of the two
+ * results.
+ *
+ * <p>Differs from {@link RerollDice} in that the new results are allowed to be below the
+ * lowerBound.
+ */
+public class RerollDiceOnce extends AbstractNumberFunction {
 
-  public If() {
-    super(3, 3, false, "if");
+  public RerollDiceOnce() {
+    super(3, 4, false, "rerollOnce");
   }
 
   @Override
   public Object childEvaluate(
       Parser parser, VariableResolver resolver, String functionName, List<Object> parameters)
       throws EvaluationException {
-    if (BigDecimal.ZERO.equals((BigDecimal) parameters.get(0))) return parameters.get(2);
+    int n = 0;
+    int times = ((BigDecimal) parameters.get(n++)).intValue();
+    int sides = ((BigDecimal) parameters.get(n++)).intValue();
+    int lowerBound = ((BigDecimal) parameters.get(n++)).intValue();
+    boolean chooseHigher = false;
+    if (parameters.size() > n)
+      chooseHigher =
+          !BigDecimal.ZERO.equals(parameters.get(n)); // as with If, anything other than 0 is truthy
 
-    return parameters.get(1);
+    return new BigDecimal(DiceHelper.rerollDiceOnce(times, sides, lowerBound, chooseHigher));
   }
 }

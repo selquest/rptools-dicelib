@@ -19,7 +19,10 @@ import java.math.BigInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import junit.framework.TestCase;
+import net.rptools.parser.MapVariableResolver;
 import net.rptools.parser.ParserException;
+import net.rptools.parser.VariableResolver;
+import net.rptools.parser.function.EvaluationException;
 
 public class ExpressionParserTest extends TestCase {
 
@@ -51,6 +54,38 @@ public class ExpressionParserTest extends TestCase {
     Result result = new ExpressionParser().evaluate("100+10d6k8+1");
 
     assertEquals(new BigDecimal(138), result.getValue());
+  }
+
+  public void testEvaluate_Keep_error_tooManyDice() throws ParserException {
+    try {
+      Result result = new ExpressionParser().evaluate("2d6k4");
+      fail("Expected EvaluationException from trying to keep too many dice");
+    } catch (EvaluationException expected) {
+      // test passes if expected exception is produced
+    }
+  }
+
+  public void testEvaluate_KeepLowest_error_tooManyDice() throws ParserException {
+    try {
+      Result result = new ExpressionParser().evaluate("2d6kl4");
+      fail("Expected EvaluationException from trying to keep too many dice");
+    } catch (EvaluationException expected) {
+      // test passes if expected exception is produced
+    }
+  }
+
+  public void testEvaluate_RerollOnceAndKeep() throws ParserException {
+    RunData.setSeed(10423L);
+    Result result = new ExpressionParser().evaluate("20d10rk5");
+    // the sequence of rolls produced includes an instance of a 4 being replaced by a 3
+    assertEquals(new BigDecimal(121), result.getValue());
+  }
+
+  public void testEvaluate_RerollOnceAndChoose() throws ParserException {
+    RunData.setSeed(10423L);
+    Result result = new ExpressionParser().evaluate("20d10rc5");
+    // in rerollAndChoose mode, the 4 gets preserved instead of being replaced by the 3
+    assertEquals(new BigDecimal(122), result.getValue());
   }
 
   public void testEvaluate_CountSuccess() throws ParserException {
@@ -123,21 +158,29 @@ public class ExpressionParserTest extends TestCase {
   public void testEvaluate_HeroRoll() throws ParserException {
     RunData.setSeed(10423L);
     ExpressionParser parser = new ExpressionParser();
+    VariableResolver resolver = new MapVariableResolver();
 
-    Result result = parser.evaluate("4.5d6h");
+    Result result = parser.evaluate("4.5d6h", resolver);
     assertEquals(new BigDecimal(18), result.getValue());
 
-    result = parser.evaluate("4.5d6b");
+    result = parser.evaluate("4.5d6b", resolver);
     assertEquals(new BigDecimal(5), result.getValue());
 
     RunData.setSeed(10423L);
     parser = new ExpressionParser();
+    resolver = new MapVariableResolver();
 
-    result = parser.evaluate("4d6h");
+    result = parser.evaluate("4d6h", resolver);
     assertEquals(new BigDecimal(15), result.getValue());
 
-    result = parser.evaluate("4d6b");
+    result = parser.evaluate("4d6b", resolver);
     assertEquals(new BigDecimal(4), result.getValue());
+  }
+
+  private VariableResolver initVar(String name, Object value) throws ParserException {
+    VariableResolver result = new MapVariableResolver();
+    result.setVariable(name, value);
+    return result;
   }
 
   public void testEvaluate_FudgeRoll() throws ParserException {
@@ -151,8 +194,7 @@ public class ExpressionParserTest extends TestCase {
     assertEquals(new BigDecimal(0), result.getValue());
 
     // Don't parse df in the middle of things
-    parser.getParser().getVariableResolver().setVariable("asdfg", new BigDecimal(10));
-    result = parser.evaluate("asdfg");
+    result = parser.evaluate("asdfg", initVar("asdfg", new BigDecimal(10)));
     assertEquals(new BigDecimal(10), result.getValue());
   }
 
@@ -167,8 +209,7 @@ public class ExpressionParserTest extends TestCase {
     assertEquals(new BigDecimal(4), result.getValue());
 
     // Don't parse a uf in the middle of other things
-    parser.getParser().getVariableResolver().setVariable("asufg", new BigDecimal(10));
-    result = parser.evaluate("asufg");
+    result = parser.evaluate("asufg", initVar("asufg", new BigDecimal(10)));
     assertEquals(new BigDecimal(10), result.getValue());
   }
 
@@ -228,9 +269,43 @@ public class ExpressionParserTest extends TestCase {
 
   public void testVariableRegexOverlaps() throws ParserException {
     ExpressionParser parser = new ExpressionParser();
-    parser.getParser().setVariable("food10", new BigDecimal(10));
+    Result result = parser.evaluate("food10 + 10", initVar("food10", new BigDecimal(10)));
+    assertEquals(new BigDecimal(20), result.getValue());
+  }
 
-    evaluateExpression(parser, "food10 + 10", new BigDecimal(20));
+  public void testNonDetailedExpression() throws ParserException {
+    ExpressionParser parser = new ExpressionParser();
+
+    int[] flattenings = new int[] {0};
+
+    MapVariableResolver resolver = new MapVariableResolver();
+    resolver.setVariable(
+        "anumber",
+        new BigDecimal(3) {
+          @Override
+          public String toString() {
+            flattenings[0]++;
+            return super.toString();
+          }
+        });
+
+    // one evaluation with detailed expression (the default)
+    Result result = parser.evaluate("anumber + 1", resolver, true);
+    assertEquals("anumber + 1", result.getExpression());
+    assertEquals("3 + 1", result.getDetailExpression());
+    assertEquals(new BigDecimal(4), result.getValue());
+
+    // one evaluation without detailed expression (this makes dicelib not go through a deterministic
+    // expression)
+    result = parser.evaluate("anumber + 1", resolver, false);
+    assertEquals("anumber + 1", result.getExpression());
+    assertEquals("anumber + 1", result.getDetailExpression());
+    assertEquals(new BigDecimal(4), result.getValue());
+
+    // expecting one flattening only for the former, not for the latter
+    // this makes json arrays not being flattened/coerced on every macro
+    // line *unless* the result is printed out
+    assertEquals(flattenings[0], 1);
   }
 
   private void evaluateExpression(ExpressionParser p, String expression, BigDecimal answer)
